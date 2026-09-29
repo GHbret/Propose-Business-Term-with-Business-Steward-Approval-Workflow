@@ -7,7 +7,14 @@
 | **File** | `intakeBusinessTermApproval.bpmn` |
 | **Start type** | Global |
 | **Approver** | **Business Steward** of the Glossary domain the requester selects |
-| **Status** | Not yet deployed or tested. See [Section 8](#8-items-to-verify-on-first-deployment) |
+| **Status** | Tested and deployed in a Collibra instance (bailine-fed) |
+
+> Propose a new Business Term or Acronym in a selected Glossary. The proposal is created as a Candidate asset and routed to that glossary's Business Steward for review. Approval sets it to Accepted; rejection sets it to Rejected and emails the reason to the proposer. All actions are audited on the asset.
+
+> [!WARNING]
+> **Disclaimer: use at your own risk.** This workflow is provided as-is, as an example, with no warranty or support. It creates and changes assets, statuses, comments and relations, and it sends notifications. Collibra versions, operating models and permissions differ, so behaviour in your environment may not match the tested setup.
+>
+> **Always deploy and test in a non-production Collibra instance first.** Promote it to production only after you've checked the configuration ([Section 6](#6-configuration)), the version-dependent items ([Section 8](#8-items-to-verify-on-first-deployment)) and the test scenarios ([Section 9](#9-test-scenarios)) in that non-production environment. Review the workflow again after every Collibra upgrade.
 
 ---
 
@@ -169,6 +176,7 @@ The Glossary domain type (`…010001`) and the fallback domain (`…6013`) are s
 
 ## 7. Deployment steps
 
+0. **Use a non-production instance first.** Carry out every step below in a non-production (test or sandbox) environment. Repeat them in production only after all the test scenarios pass.
 1. **Before deploying, set the fallback approver.** Change `fallbackApproverExpression` to a group that exists.
 2. **Upload the file.** In **Settings > Workflows > Definitions**, click **Upload a file** and choose `intakeBusinessTermApproval.bpmn`. Its process ID is new, so the existing workflow isn't affected.
    - The file is **744 lines** and ends at `</definitions>` with no trailing blank line.
@@ -240,3 +248,4 @@ Some Java API calls used here aren't fully confirmed for your Collibra version. 
 | 2026-09-29 | Review form reworked after testing. Removed the clickable asset link, which didn't lead to the asset. Brought back read-only (grayed) fields for the proposed values: Name, Type, Glossary, Proposed By, Definition, Reason, Related Assets. They appear under the guidance, which ends with "THESE ARE THE PROPOSED VALUES (read-only):", and before the Decision. Definition and reason are now single-line fields so they display grayed out. Removed the asset link from the approval and rejection emails. BPMN is now 701 lines. |
 | 2026-09-29 | Proposed values moved from grayed-out fields into the review task description, so they're easier to read and still read-only. Long values are shortened to stay within the 4,000-character description limit. Added the `reviewDescriptionFormat` option (text or html). BPMN is now 723 lines. |
 | 2026-09-29 | Review guidance formatting: paragraph breaks before "Before deciding", "Approve", "Reject" and the proposed values; checklist items and proposed values each on their own line; bold labels. The glossary is shown by name only, without its parent community. The description is now built in the script, and `reviewDescriptionFormat` defaults to `html`. BPMN is now 744 lines. |
+| 2026-09-29 | Status changed to tested and deployed. Added the workflow summary, the use-at-your-own-risk disclaimer, and the rule to always test in a non-production instance first. |
