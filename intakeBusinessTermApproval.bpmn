@@ -1,0 +1,744 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:flowable="http://flowable.org/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI" xmlns:design="http://flowable.org/design" typeLanguage="http://www.w3.org/2001/XMLSchema" expressionLanguage="http://www.w3.org/1999/XPath" targetNamespace="http://www.collibra.com/apiv2" design:palette="flowable-process-palette">
+  <collaboration id="Collaboration">
+    <participant id="pool1" name="Propose Business Term with Approval" processRef="intakeBusinessTermApproval"></participant>
+  </collaboration>
+  <process id="intakeBusinessTermApproval" name="Propose New Business Term (with Approval)" isExecutable="true">
+    <documentation>Propose a new Business Term or Acronym in a selected Glossary domain. The asset is created with status Candidate and routed to the Business Steward of the selected glossary for review. Approval sets the status to Accepted; rejection sets it to Rejected and emails the reason to the proposer. Every action is recorded as a comment on the asset and in the application log.</documentation>
+    <extensionElements>
+      <design:stencilid><![CDATA[BPMNDiagram]]></design:stencilid>
+      <design:creationdate><![CDATA[2026-09-29T12:00:00.000Z]]></design:creationdate>
+      <design:modificationdate><![CDATA[2026-09-29T12:00:00.000Z]]></design:modificationdate>
+    </extensionElements>
+    <laneSet id="laneSet_intakeBusinessTermApproval">
+      <lane id="laneRequester" name="Requester">
+        <flowNodeRef>startevent1</flowNodeRef>
+        <flowNodeRef>getGlossaryDomains</flowNodeRef>
+        <flowNodeRef>proposeTerm</flowNodeRef>
+        <flowNodeRef>createCandidateAsset</flowNodeRef>
+      </lane>
+      <lane id="laneSteward" name="Business Steward">
+        <flowNodeRef>reviewTerm</flowNodeRef>
+        <flowNodeRef>validateDecision</flowNodeRef>
+        <flowNodeRef>decisionGateway</flowNodeRef>
+        <flowNodeRef>approveAsset</flowNodeRef>
+        <flowNodeRef>rejectAsset</flowNodeRef>
+        <flowNodeRef>endApproved</flowNodeRef>
+        <flowNodeRef>endRejected</flowNodeRef>
+      </lane>
+    </laneSet>
+
+    <!-- ============================================================ -->
+    <!-- START                                                        -->
+    <!-- ============================================================ -->
+    <startEvent id="startevent1" name="Start" flowable:initiator="initiator" flowable:formFieldValidation="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[StartNoneEvent]]></design:stencilid>
+      </extensionElements>
+    </startEvent>
+
+    <!-- ============================================================ -->
+    <!-- 1. Build the list of Glossary domains for the drop-down      -->
+    <!-- ============================================================ -->
+    <scriptTask id="getGlossaryDomains" name="Get Glossary Domains" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[ScriptTask]]></design:stencilid>
+      </extensionElements>
+      <script><![CDATA[
+       // #importFile NONE
+       import com.collibra.dgc.core.api.dto.instance.domain.FindDomainsRequest;
+
+       // Glossary domain type
+       def glossaryDomainTypeUuid = "00000000-0000-0000-0000-000000010001"
+       // Fallback domain if no Glossary domains are found
+       def fallbackDomainUuid = "00000000-0000-0000-0000-000000006013"
+
+       def ids = []
+       int offset = 0
+       int limit = 500
+       try {
+           loggerApi.info("[intakeBusinessTermApproval] Looking up Glossary domains")
+           while (true) {
+               def page = domainApi.findDomains(FindDomainsRequest.builder()
+                   .typeId(string2Uuid(glossaryDomainTypeUuid))
+                   .offset(offset)
+                   .limit(limit)
+                   .build())
+               def results = page.getResults()
+               results.each { d -> ids.add(uuid2String(d.getId())) }
+               if (results.size() < limit) { break }
+               offset += limit
+           }
+           loggerApi.info("[intakeBusinessTermApproval] Found " + ids.size() + " Glossary domain(s)")
+       } catch (Exception e) {
+           loggerApi.error("[intakeBusinessTermApproval] Glossary domain lookup failed: " + e.getClass().getName() + " - " + e.getMessage())
+           throw e
+       }
+
+       if (ids.isEmpty()) {
+           ids.add(fallbackDomainUuid)
+       }
+
+       execution.setVariable("glossaryDomainIds", ids.join(","))
+      ]]></script>
+    </scriptTask>
+
+    <!-- ============================================================ -->
+    <!-- 2. Proposal form (initiator)                                  -->
+    <!-- ============================================================ -->
+    <userTask id="proposeTerm" name="Propose Business Term" flowable:candidateUsers="user(${initiator})" flowable:formFieldValidation="false">
+      <documentation>Complete the form to propose a new Business Term or Acronym. Your proposal will be created with status Candidate and sent to the Business Steward of the selected glossary for review.</documentation>
+      <extensionElements>
+        <flowable:formProperty id="intakeVocabulary" name="Glossary" type="domain" required="true">
+          <flowable:value id="proposedValues" name="${glossaryDomainIds}"></flowable:value>
+          <flowable:value id="proposedFixed" name="true"></flowable:value>
+          <flowable:value id="multiValue" name="false"></flowable:value>
+          <flowable:value id="helpText" name="Select the Glossary domain the new term or acronym should be created in. The Business Steward of this glossary will review your proposal."></flowable:value>
+        </flowable:formProperty>
+        <flowable:formProperty id="signifier" name="Name" type="string" required="true"></flowable:formProperty>
+        <flowable:formProperty id="conceptType" name="Type" type="assetType" required="true">
+          <flowable:value id="proposedFixed" name="true"></flowable:value>
+          <flowable:value id="multiValue" name="false"></flowable:value>
+          <flowable:value id="proposedValues" name="00000000-0000-0000-0000-000000011001,00000000-0000-0000-0000-000000011003"></flowable:value>
+        </flowable:formProperty>
+        <flowable:formProperty id="definition" name="Proposed Definition" type="textarea"></flowable:formProperty>
+        <flowable:formProperty id="usesrelation" name="Related Assets" type="term">
+          <flowable:value id="multiValue" name="true"></flowable:value>
+          <flowable:value id="conceptType" name="00000000-0000-0000-0000-000000031000"></flowable:value>
+        </flowable:formProperty>
+        <flowable:formProperty id="note" name="Reason for proposal" type="textarea"></flowable:formProperty>
+        <flowable:formProperty id="submit" name="Propose" type="button" default="false"></flowable:formProperty>
+
+        <!-- ===== Hidden configuration (edit defaults here) ===== -->
+        <flowable:formProperty id="usesRelationTypeUuid" name="Uses Relation Type UUID" type="string" default="00000000-0000-0000-0000-000000007004" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="definitionAttributeTypeUuid" name="Definition Attribute Type UUID" type="string" default="00000000-0000-0000-0000-000000000202" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="noteAttributeTypeUuid" name="Note Attribute Type UUID" type="string" default="00000000-0000-0000-0000-000000003116" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="candidateStatusUuid" name="Candidate Status UUID" type="string" default="00000000-0000-0000-0000-000000005008" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="acceptedStatusUuid" name="Accepted Status UUID" type="string" default="00000000-0000-0000-0000-000000005009" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="rejectedStatusUuid" name="Rejected Status UUID" type="string" default="00000000-0000-0000-0000-000000005010" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="businessStewardRoleName" name="Approver Role Name" type="string" default="Business Steward" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="fallbackApproverExpression" name="Fallback Approver Expression" type="string" default="{group(Data Governance Council)}" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="preventSelfApproval" name="Prevent Self Approval" type="string" default="false" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="notifyProposerOnApproval" name="Notify Proposer On Approval" type="string" default="true" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="reviewDescriptionFormat" name="Review Description Format (html or text)" type="string" default="html" readable="false"></flowable:formProperty>
+        <flowable:formProperty id="auditFallbackAttributeTypeUuid" name="Audit Fallback Attribute Type UUID" type="string" default="00000000-0000-0000-0000-000000003116" readable="false"></flowable:formProperty>
+        <flowable:work-form-field-validation><![CDATA[false]]></flowable:work-form-field-validation>
+        <design:stencilid><![CDATA[UserTask]]></design:stencilid>
+      </extensionElements>
+    </userTask>
+
+    <!-- ============================================================ -->
+    <!-- 3. Create the asset as Candidate and resolve the approvers   -->
+    <!-- ============================================================ -->
+    <scriptTask id="createCandidateAsset" name="Create Candidate Asset and Resolve Business Steward" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[ScriptTask]]></design:stencilid>
+      </extensionElements>
+      <script><![CDATA[
+       // #importFile NONE
+       import com.collibra.dgc.core.api.dto.instance.asset.AddAssetRequest;
+       import com.collibra.dgc.core.api.dto.instance.attribute.AddAttributeRequest;
+       import com.collibra.dgc.core.api.dto.instance.relation.AddRelationRequest;
+       import com.collibra.dgc.core.api.dto.instance.comment.AddCommentRequest;
+
+       def domainUuid        = toUuid(execution.getVariable("intakeVocabulary"))
+       def assetTypeUuid     = toUuid(execution.getVariable("conceptType"))
+       def termName          = execution.getVariable("signifier").toString().trim()
+       def definition        = execution.getVariable("definition")
+       def note              = execution.getVariable("note")
+       def usesrelation      = execution.getVariable("usesrelation")
+       def proposerUserName  = execution.getVariable("initiator").toString()
+       def stewardRoleName   = execution.getVariable("businessStewardRoleName").toString().trim()
+       def fallbackExpr      = execution.getVariable("fallbackApproverExpression").toString().trim()
+       def auditAttrType     = execution.getVariable("auditFallbackAttributeTypeUuid").toString().trim()
+
+       // ---------- Context: domain, community, asset type ----------
+       def domain        = domainApi.getDomain(domainUuid)
+       def domainName    = domain.getName()
+       def communityName = domain.getCommunity().getName()
+       def assetTypeName = assetTypeApi.getAssetType(assetTypeUuid).getName()
+
+       // ---------- Proposer ----------
+       def proposerIds = []
+       try { proposerIds = users.getUserIds("{user(" + proposerUserName + ")}") ?: [] } catch (Throwable t) {
+           loggerApi.error("[intakeBusinessTermApproval] Could not resolve proposer '" + proposerUserName + "': " + t.getMessage())
+       }
+       def proposerDisplayName = proposerUserName
+       try {
+           def u = userApi.getUserByUsername(proposerUserName)
+           def full = ((u.getFirstName() ?: "") + " " + (u.getLastName() ?: "")).trim()
+           if (full) { proposerDisplayName = full + " (" + proposerUserName + ")" }
+       } catch (Throwable t) { /* keep username */ }
+
+       // ---------- Resolve approvers: Business Steward of the selected glossary ----------
+       def approverExpression = "{role(" + stewardRoleName + ";" + communityName + ";" + domainName + ")}"
+       def approverSource = stewardRoleName + " of glossary '" + domainName + "'"
+       def approverIds = []
+       try { approverIds = users.getUserIds(approverExpression) ?: [] } catch (Throwable t) {
+           loggerApi.error("[intakeBusinessTermApproval] Approver expression failed " + approverExpression + ": " + t.getMessage())
+       }
+       if (approverIds.isEmpty()) {
+           loggerApi.info("[intakeBusinessTermApproval] No " + stewardRoleName + " on '" + domainName + "'; using fallback " + fallbackExpr)
+           approverExpression = fallbackExpr
+           approverSource = "fallback approvers " + fallbackExpr + " (no " + stewardRoleName + " assigned to '" + domainName + "')"
+           try { approverIds = users.getUserIds(approverExpression) ?: [] } catch (Throwable t) { approverIds = [] }
+       }
+       if (approverIds.isEmpty()) {
+           def msg = "No approver found: glossary '" + domainName + "' has no " + stewardRoleName +
+                     " and the fallback expression '" + fallbackExpr + "' resolves to no users. " +
+                     "Assign a " + stewardRoleName + " to the glossary or update fallbackApproverExpression."
+           loggerApi.error("[intakeBusinessTermApproval] " + msg)
+           throw new IllegalStateException(msg)
+       }
+
+       // ---------- Create the asset with status Candidate ----------
+       def newAssetUuid = assetApi.addAsset(AddAssetRequest.builder()
+           .name(termName)
+           .displayName(termName)
+           .typeId(assetTypeUuid)
+           .domainId(domainUuid)
+           .statusId(string2Uuid(execution.getVariable("candidateStatusUuid").toString().trim()))
+           .build()).getId()
+
+       addAttributeToAsset(newAssetUuid, definition, execution.getVariable("definitionAttributeTypeUuid"))
+       addAttributeToAsset(newAssetUuid, note, execution.getVariable("noteAttributeTypeUuid"))
+       addRelations(newAssetUuid, execution.getVariable("usesRelationTypeUuid"), usesrelation)
+
+       def assetUrl = ""
+       try { assetUrl = collibraConfiguration.getApplicationUrl() + "/asset/" + uuid2String(newAssetUuid) } catch (Throwable t) { assetUrl = "" }
+
+       // ---------- Audit ----------
+       audit(newAssetUuid, auditAttrType,
+             "[Workflow audit] PROPOSED on " + nowUtc() + " by " + proposerDisplayName +
+             ". Glossary: " + domainName + " (" + communityName + "). Type: " + assetTypeName +
+             ". Status set to Candidate. Routed for approval to " + approverSource + ".")
+
+       // ---------- Variables for the review task ----------
+       execution.setVariable("outputCreatedTermId", uuid2String(newAssetUuid))
+       execution.setVariable("termName", termName)
+       execution.setVariable("assetTypeName", assetTypeName)
+       execution.setVariable("domainName", domainName)
+       execution.setVariable("communityName", communityName)
+       execution.setVariable("proposerUserName", proposerUserName)
+       execution.setVariable("proposerDisplayName", proposerDisplayName)
+       execution.setVariable("proposerUserIds", proposerIds.collect { it.toString() }.join(","))
+       execution.setVariable("proposedAssetUrl", assetUrl)
+
+       // Read-only "proposed values" shown on the review form
+       execution.setVariable("proposedDefinitionDisplay", displayText(definition))
+       execution.setVariable("proposedReasonDisplay", displayText(note))
+       def relatedNames = []
+       if (usesrelation != null) {
+           usesrelation.each { r ->
+               try { relatedNames.add(assetApi.getAsset(toUuid(r)).getName()) } catch (Throwable t) { relatedNames.add(r.toString()) }
+           }
+       }
+       execution.setVariable("proposedRelatedDisplay", relatedNames ? relatedNames.join(", ") : "(none)")
+
+       // ---------- Review task description (guidance + proposed values) ----------
+       // Built here so it can be formatted with paragraphs and line breaks. Values are read-only by nature.
+       // Flowable stores task descriptions in a 4000-character column, so long values are clipped;
+       // the full text is always on the Candidate asset.
+       def fmt = (execution.getVariable("reviewDescriptionFormat") ?: "html").toString().trim().toLowerCase()
+       def html = (fmt == "html")
+       def P  = html ? "<br/><br/>" : "\n\n"     // paragraph break
+       def BR = html ? "<br/>" : "\n"             // line break
+       def B  = { t -> html ? "<b>" + esc(t) + "</b>" : t.toString() }
+       def T  = { t -> html ? esc(t) : t.toString() }
+
+       def checklist = [
+           "1. Verify the name is correct, correctly spelled and follows naming standards.",
+           "2. Verify the definition is clear, accurate, complete and not circular.",
+           "3. Confirm it is not a duplicate of an existing term or acronym in the glossary.",
+           "4. Confirm it belongs in this glossary and the type is correct.",
+           "5. Check that any related assets are appropriate."
+       ]
+       def values = [
+           ["Name",                termName],
+           ["Type",                assetTypeName],
+           ["Glossary",            domainName],
+           ["Proposed by",         proposerDisplayName],
+           ["Definition",          clip(displayText(definition), 1000)],
+           ["Reason for proposal", clip(displayText(note), 700)],
+           ["Related assets",      clip(relatedNames ? relatedNames.join(", ") : "(none)", 400)]
+       ]
+
+       def description =
+           T(proposerDisplayName + " has proposed the " + assetTypeName + " '" + termName + "' for the glossary '" + domainName + "'.") +
+           P + T("Before deciding, please review the proposed values below and:") + BR +
+           checklist.collect { T(it) }.join(BR) +
+           P + B("Approve") + T(" sets the status to Accepted.") +
+           P + B("Reject") + T(" sets the status to Rejected, requires a reason, and emails that reason to the proposer.") +
+           P + B("PROPOSED VALUES (read-only):") + BR +
+           values.collect { B(it[0] + ":") + " " + T(it[1]) }.join(BR)
+
+       execution.setVariable("reviewDescription", description)
+       execution.setVariable("approverExpression", approverExpression)
+       execution.setVariable("approverSource", approverSource)
+       execution.setVariable("reviewValidationMessage", "")
+       execution.setVariable("proposedOn", nowUtc())
+
+       loggerApi.info("[intakeBusinessTermApproval] Created candidate asset " + uuid2String(newAssetUuid) + " '" + termName + "'; approvers " + approverExpression)
+
+       // ================= helpers =================
+       def toUuid(value) {
+           return (value instanceof UUID) ? value : string2Uuid(value.toString().trim())
+       }
+
+       // Plain-text version of a form value for read-only display (strips HTML tags from rich text)
+       def displayText(value) {
+           if (value == null || value.toString().trim().isEmpty()) { return "(none provided)" }
+           return value.toString().replaceAll("<[^>]*>", " ").replaceAll("&nbsp;", " ").replaceAll("\\s+", " ").trim()
+       }
+
+       def clip(text, max) {
+           def t = text == null ? "" : text.toString()
+           return t.length() <= max ? t : t.substring(0, max) + "... (truncated - full text is on the asset)"
+       }
+
+       def esc(text) {
+           return (text == null ? "" : text.toString()).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+       }
+
+       def nowUtc() {
+           return java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+               .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
+       }
+
+       def addAttributeToAsset(assetUuid, attributeValue, attributeTypeUuid) {
+           if (attributeValue == null || attributeValue.toString().trim().isEmpty()) { return }
+           attributeApi.addAttribute(AddAttributeRequest.builder()
+               .assetId(assetUuid)
+               .typeId(string2Uuid(attributeTypeUuid.toString().trim()))
+               .value(attributeValue.toString())
+               .build())
+       }
+
+       def addRelations(sourceUuid, relationTypeUuid, targetUuidList) {
+           if (targetUuidList == null || targetUuidList.isEmpty()) { return }
+           def requests = []
+           targetUuidList.each { t ->
+               requests.add(AddRelationRequest.builder()
+                   .sourceId(sourceUuid)
+                   .targetId(toUuid(t))
+                   .typeId(string2Uuid(relationTypeUuid.toString().trim()))
+                   .build())
+           }
+           relationApi.addRelations(requests)
+       }
+
+       // Writes an audit entry as a comment on the asset; falls back to an attribute if comments are unavailable.
+       def audit(assetUuid, fallbackAttrTypeUuid, text) {
+           loggerApi.info("[intakeBusinessTermApproval] AUDIT " + uuid2String(assetUuid) + " " + text)
+           try {
+               commentApi.addComment(AddCommentRequest.builder()
+                   .content(text)
+                   .baseResourceId(assetUuid)
+                   .baseResourceDiscriminator("Asset")
+                   .build())
+           } catch (Throwable t) {
+               loggerApi.error("[intakeBusinessTermApproval] Comment audit failed (" + t.getClass().getName() + ": " + t.getMessage() + "); writing audit attribute instead")
+               attributeApi.addAttribute(AddAttributeRequest.builder()
+                   .assetId(assetUuid)
+                   .typeId(string2Uuid(fallbackAttrTypeUuid.toString().trim()))
+                   .value(text)
+                   .build())
+           }
+       }
+      ]]></script>
+    </scriptTask>
+
+    <!-- ============================================================ -->
+    <!-- 4. Business Steward review                                   -->
+    <!-- ============================================================ -->
+    <userTask id="reviewTerm" name="Review Proposed Glossary Asset" flowable:candidateUsers="${approverExpression}" flowable:taskCompleterVariableName="reviewerUserName" flowable:formFieldValidation="false">
+      <documentation>${reviewValidationMessage}${reviewDescription}</documentation>
+      <extensionElements>
+        <!-- ===== Steward decision ===== -->
+        <flowable:formProperty id="reviewDecision" name="Decision" type="enum" required="true">
+          <flowable:value id="approve" name="Approve"></flowable:value>
+          <flowable:value id="reject" name="Reject"></flowable:value>
+        </flowable:formProperty>
+        <flowable:formProperty id="reviewComment" name="Comments (required to reject)" type="textarea">
+          <flowable:value id="helpText" name="Required when rejecting. This text is emailed to the proposer and recorded in the audit trail on the asset."></flowable:value>
+        </flowable:formProperty>
+        <flowable:formProperty id="submitDecision" name="Submit decision" type="button" default="false"></flowable:formProperty>
+        <flowable:work-form-field-validation><![CDATA[false]]></flowable:work-form-field-validation>
+        <design:stencilid><![CDATA[UserTask]]></design:stencilid>
+      </extensionElements>
+    </userTask>
+
+    <!-- ============================================================ -->
+    <!-- 5. Validate the decision (reason required on reject)         -->
+    <!-- ============================================================ -->
+    <scriptTask id="validateDecision" name="Validate Decision" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[ScriptTask]]></design:stencilid>
+      </extensionElements>
+      <script><![CDATA[
+       // #importFile NONE
+       def decision = (execution.getVariable("reviewDecision") ?: "").toString().trim().toLowerCase()
+       def reason   = (execution.getVariable("reviewComment") ?: "").toString().trim()
+       def reviewer = execution.getVariable("reviewerUserName")
+
+       if (!reviewer) {
+           try {
+               def cu = users.getCurrent()
+               reviewer = cu?.metaClass?.respondsTo(cu, "getUserName") ? cu.getUserName() : cu?.toString()
+           } catch (Throwable t) { reviewer = "unknown" }
+       }
+       reviewer = reviewer.toString()
+       execution.setVariable("reviewerUserName", reviewer)
+
+       def reviewerDisplayName = reviewer
+       try {
+           def u = userApi.getUserByUsername(reviewer)
+           def full = ((u.getFirstName() ?: "") + " " + (u.getLastName() ?: "")).trim()
+           if (full) { reviewerDisplayName = full + " (" + reviewer + ")" }
+       } catch (Throwable t) { /* keep username */ }
+       execution.setVariable("reviewerDisplayName", reviewerDisplayName)
+
+       def outcome = decision
+       def message = ""
+       def selfApprovalBlocked = "true".equalsIgnoreCase((execution.getVariable("preventSelfApproval") ?: "false").toString().trim())
+
+       if (decision != "approve" && decision != "reject") {
+           outcome = "invalid"
+           message = "Select a decision (Approve or Reject)."
+       } else if (decision == "reject" && reason.isEmpty()) {
+           outcome = "invalid"
+           message = "A reason is required when rejecting. Enter it in the Comments field and submit again."
+       } else if (selfApprovalBlocked && decision == "approve" && reviewer == execution.getVariable("proposerUserName")) {
+           outcome = "invalid"
+           message = "You proposed this term, so you cannot approve it. Reassign this task to another approver."
+       }
+
+       execution.setVariable("reviewOutcome", outcome)
+       // Shown at the top of the review task (task description) when the task is sent back
+       def asHtml = "html".equalsIgnoreCase((execution.getVariable("reviewDescriptionFormat") ?: "html").toString().trim())
+       def notice = ""
+       if (message) {
+           notice = asHtml ? "<b>ACTION REQUIRED:</b> " + message + "<br/><br/>" : "ACTION REQUIRED: " + message + "\n\n"
+       }
+       execution.setVariable("reviewValidationMessage", notice)
+       loggerApi.info("[intakeBusinessTermApproval] Review submitted by " + reviewer + " for asset " +
+           execution.getVariable("outputCreatedTermId") + ": decision=" + decision + ", outcome=" + outcome +
+           (message ? " (" + message + ")" : ""))
+      ]]></script>
+    </scriptTask>
+
+    <exclusiveGateway id="decisionGateway" name="Decision?">
+      <extensionElements>
+        <design:stencilid><![CDATA[Exclusive_Databased_Gateway]]></design:stencilid>
+      </extensionElements>
+    </exclusiveGateway>
+
+    <!-- ============================================================ -->
+    <!-- 6a. Approve                                                  -->
+    <!-- ============================================================ -->
+    <scriptTask id="approveAsset" name="Approve: Set Accepted, Audit and Notify" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[ScriptTask]]></design:stencilid>
+      </extensionElements>
+      <script><![CDATA[
+       // #importFile NONE
+       import com.collibra.dgc.core.api.dto.instance.asset.ChangeAssetRequest;
+       import com.collibra.dgc.core.api.dto.instance.attribute.AddAttributeRequest;
+       import com.collibra.dgc.core.api.dto.instance.comment.AddCommentRequest;
+
+       def assetUuid = string2Uuid(execution.getVariable("outputCreatedTermId").toString())
+       def termName  = execution.getVariable("termName").toString()
+       def reviewer  = execution.getVariable("reviewerDisplayName").toString()
+       def comment   = (execution.getVariable("reviewComment") ?: "").toString().trim()
+       def assetUrl  = (execution.getVariable("proposedAssetUrl") ?: "").toString()
+       def auditAttr = execution.getVariable("auditFallbackAttributeTypeUuid").toString()
+
+       assetApi.changeAsset(ChangeAssetRequest.builder()
+           .id(assetUuid)
+           .statusId(string2Uuid(execution.getVariable("acceptedStatusUuid").toString().trim()))
+           .build())
+
+       def decidedOn = nowUtc()
+       execution.setVariable("decisionDate", decidedOn)
+
+       def notified = "not sent (disabled)"
+       if ("true".equalsIgnoreCase((execution.getVariable("notifyProposerOnApproval") ?: "true").toString().trim())) {
+           notified = sendNotification(execution.getVariable("proposerUserIds"),
+               "Your proposed term '" + termName + "' has been approved",
+               ["Your proposed " + execution.getVariable("assetTypeName") + " '" + termName + "' in the glossary '" +
+                    execution.getVariable("domainName") + "' has been approved by " + reviewer + " and its status is now Accepted.",
+                (comment ? "Reviewer comments: " + comment : "")],
+               assetUuid, termName, assetUrl)
+       }
+       execution.setVariable("notificationStatus", notified)
+
+       audit(assetUuid, auditAttr,
+           "[Workflow audit] APPROVED on " + decidedOn + " by " + reviewer + ". Status changed Candidate -> Accepted." +
+           (comment ? " Reviewer comments: " + comment : "") + " Proposer notification: " + notified + ".")
+
+       // ================= helpers =================
+       def nowUtc() {
+           return java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+               .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
+       }
+
+       def sendNotification(userIdsCsv, subjectText, lines, assetUuid, assetName, assetUrl) {
+           try {
+               def ids = (userIdsCsv ?: "").toString().split(",").findAll { it?.trim() }.collect { string2Uuid(it.trim()) }
+               if (ids.isEmpty()) { return "not sent (proposer could not be resolved)" }
+               notificationApi.send { builder -> builder
+                   .recipientUsers(ids)
+                   .subject { s -> s.text(subjectText) }
+                   .content { c ->
+                       lines.findAll { it }.each { line -> c.text { t -> t.text(line) }; c.newLine() }
+                       c
+                   }
+                   .resource(assetUuid, assetName, "ASSET")
+               }
+               return "sent"
+           } catch (Throwable t) {
+               loggerApi.error("[intakeBusinessTermApproval] Notification failed: " + t.getClass().getName() + " - " + t.getMessage())
+               return "FAILED (" + t.getClass().getSimpleName() + ")"
+           }
+       }
+
+       def audit(assetUuid, fallbackAttrTypeUuid, text) {
+           loggerApi.info("[intakeBusinessTermApproval] AUDIT " + uuid2String(assetUuid) + " " + text)
+           try {
+               commentApi.addComment(AddCommentRequest.builder()
+                   .content(text)
+                   .baseResourceId(assetUuid)
+                   .baseResourceDiscriminator("Asset")
+                   .build())
+           } catch (Throwable t) {
+               loggerApi.error("[intakeBusinessTermApproval] Comment audit failed (" + t.getClass().getName() + ": " + t.getMessage() + "); writing audit attribute instead")
+               attributeApi.addAttribute(AddAttributeRequest.builder()
+                   .assetId(assetUuid)
+                   .typeId(string2Uuid(fallbackAttrTypeUuid.toString().trim()))
+                   .value(text)
+                   .build())
+           }
+       }
+      ]]></script>
+    </scriptTask>
+
+    <!-- ============================================================ -->
+    <!-- 6b. Reject                                                   -->
+    <!-- ============================================================ -->
+    <scriptTask id="rejectAsset" name="Reject: Set Rejected, Audit and Email Proposer" scriptFormat="groovy" flowable:autoStoreVariables="false">
+      <extensionElements>
+        <design:stencilid><![CDATA[ScriptTask]]></design:stencilid>
+      </extensionElements>
+      <script><![CDATA[
+       // #importFile NONE
+       import com.collibra.dgc.core.api.dto.instance.asset.ChangeAssetRequest;
+       import com.collibra.dgc.core.api.dto.instance.attribute.AddAttributeRequest;
+       import com.collibra.dgc.core.api.dto.instance.comment.AddCommentRequest;
+
+       def assetUuid = string2Uuid(execution.getVariable("outputCreatedTermId").toString())
+       def termName  = execution.getVariable("termName").toString()
+       def reviewer  = execution.getVariable("reviewerDisplayName").toString()
+       def reason    = (execution.getVariable("reviewComment") ?: "").toString().trim()
+       def assetUrl  = (execution.getVariable("proposedAssetUrl") ?: "").toString()
+       def auditAttr = execution.getVariable("auditFallbackAttributeTypeUuid").toString()
+
+       assetApi.changeAsset(ChangeAssetRequest.builder()
+           .id(assetUuid)
+           .statusId(string2Uuid(execution.getVariable("rejectedStatusUuid").toString().trim()))
+           .build())
+
+       def decidedOn = nowUtc()
+       execution.setVariable("decisionDate", decidedOn)
+
+       def notified = sendNotification(execution.getVariable("proposerUserIds"),
+           "Your proposed term '" + termName + "' was not approved",
+           ["Your proposed " + execution.getVariable("assetTypeName") + " '" + termName + "' in the glossary '" +
+                execution.getVariable("domainName") + "' was rejected by " + reviewer + " on " + decidedOn + ".",
+            "Reason: " + reason,
+            "The asset has been kept with status Rejected for audit purposes. You may submit a new proposal that addresses the feedback."],
+           assetUuid, termName, assetUrl)
+       execution.setVariable("notificationStatus", notified)
+
+       audit(assetUuid, auditAttr,
+           "[Workflow audit] REJECTED on " + decidedOn + " by " + reviewer + ". Status changed Candidate -> Rejected. Reason: " +
+           reason + ". Rejection email to proposer (" + execution.getVariable("proposerDisplayName") + "): " + notified + ".")
+
+       // ================= helpers =================
+       def nowUtc() {
+           return java.time.ZonedDateTime.now(java.time.ZoneOffset.UTC)
+               .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm 'UTC'"))
+       }
+
+       def sendNotification(userIdsCsv, subjectText, lines, assetUuid, assetName, assetUrl) {
+           try {
+               def ids = (userIdsCsv ?: "").toString().split(",").findAll { it?.trim() }.collect { string2Uuid(it.trim()) }
+               if (ids.isEmpty()) { return "not sent (proposer could not be resolved)" }
+               notificationApi.send { builder -> builder
+                   .recipientUsers(ids)
+                   .subject { s -> s.text(subjectText) }
+                   .content { c ->
+                       lines.findAll { it }.each { line -> c.text { t -> t.text(line) }; c.newLine() }
+                       c
+                   }
+                   .resource(assetUuid, assetName, "ASSET")
+               }
+               return "sent"
+           } catch (Throwable t) {
+               loggerApi.error("[intakeBusinessTermApproval] Notification failed: " + t.getClass().getName() + " - " + t.getMessage())
+               return "FAILED (" + t.getClass().getSimpleName() + ")"
+           }
+       }
+
+       def audit(assetUuid, fallbackAttrTypeUuid, text) {
+           loggerApi.info("[intakeBusinessTermApproval] AUDIT " + uuid2String(assetUuid) + " " + text)
+           try {
+               commentApi.addComment(AddCommentRequest.builder()
+                   .content(text)
+                   .baseResourceId(assetUuid)
+                   .baseResourceDiscriminator("Asset")
+                   .build())
+           } catch (Throwable t) {
+               loggerApi.error("[intakeBusinessTermApproval] Comment audit failed (" + t.getClass().getName() + ": " + t.getMessage() + "); writing audit attribute instead")
+               attributeApi.addAttribute(AddAttributeRequest.builder()
+                   .assetId(assetUuid)
+                   .typeId(string2Uuid(fallbackAttrTypeUuid.toString().trim()))
+                   .value(text)
+                   .build())
+           }
+       }
+      ]]></script>
+    </scriptTask>
+
+    <endEvent id="endApproved" name="Approved">
+      <extensionElements>
+        <design:stencilid><![CDATA[EndNoneEvent]]></design:stencilid>
+      </extensionElements>
+    </endEvent>
+    <endEvent id="endRejected" name="Rejected">
+      <extensionElements>
+        <design:stencilid><![CDATA[EndNoneEvent]]></design:stencilid>
+      </extensionElements>
+    </endEvent>
+
+    <!-- ============================================================ -->
+    <!-- Sequence flows                                               -->
+    <!-- ============================================================ -->
+    <sequenceFlow id="flowStart" sourceRef="startevent1" targetRef="getGlossaryDomains"></sequenceFlow>
+    <sequenceFlow id="flowToForm" sourceRef="getGlossaryDomains" targetRef="proposeTerm"></sequenceFlow>
+    <sequenceFlow id="flowToCreate" sourceRef="proposeTerm" targetRef="createCandidateAsset"></sequenceFlow>
+    <sequenceFlow id="flowToReview" sourceRef="createCandidateAsset" targetRef="reviewTerm"></sequenceFlow>
+    <sequenceFlow id="flowToValidate" sourceRef="reviewTerm" targetRef="validateDecision"></sequenceFlow>
+    <sequenceFlow id="flowToGateway" sourceRef="validateDecision" targetRef="decisionGateway"></sequenceFlow>
+    <sequenceFlow id="flowApprove" name="Approve" sourceRef="decisionGateway" targetRef="approveAsset">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${reviewOutcome == 'approve'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flowReject" name="Reject" sourceRef="decisionGateway" targetRef="rejectAsset">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${reviewOutcome == 'reject'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flowInvalid" name="Missing reason / invalid" sourceRef="decisionGateway" targetRef="reviewTerm">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${reviewOutcome == 'invalid'}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flowApprovedEnd" sourceRef="approveAsset" targetRef="endApproved"></sequenceFlow>
+    <sequenceFlow id="flowRejectedEnd" sourceRef="rejectAsset" targetRef="endRejected"></sequenceFlow>
+  </process>
+
+  <!-- ============================================================ -->
+  <!-- Diagram                                                      -->
+  <!-- ============================================================ -->
+  <bpmndi:BPMNDiagram id="BPMNDiagram_Collaboration">
+    <bpmndi:BPMNPlane bpmnElement="Collaboration" id="BPMNPlane_Collaboration">
+      <bpmndi:BPMNShape bpmnElement="pool1" id="BPMNShape_pool1">
+        <omgdc:Bounds height="330.0" width="1060.0" x="60.0" y="40.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="laneRequester" id="BPMNShape_laneRequester">
+        <omgdc:Bounds height="150.0" width="1030.0" x="90.0" y="40.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="laneSteward" id="BPMNShape_laneSteward">
+        <omgdc:Bounds height="180.0" width="1030.0" x="90.0" y="190.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="startevent1" id="BPMNShape_startevent1">
+        <omgdc:Bounds height="30.0" width="30.0" x="120.0" y="100.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="getGlossaryDomains" id="BPMNShape_getGlossaryDomains">
+        <omgdc:Bounds height="55.0" width="105.0" x="190.0" y="87.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="proposeTerm" id="BPMNShape_proposeTerm">
+        <omgdc:Bounds height="55.0" width="105.0" x="340.0" y="87.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="createCandidateAsset" id="BPMNShape_createCandidateAsset">
+        <omgdc:Bounds height="55.0" width="105.0" x="490.0" y="87.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="reviewTerm" id="BPMNShape_reviewTerm">
+        <omgdc:Bounds height="55.0" width="105.0" x="490.0" y="242.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="validateDecision" id="BPMNShape_validateDecision">
+        <omgdc:Bounds height="55.0" width="105.0" x="640.0" y="242.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="decisionGateway" id="BPMNShape_decisionGateway">
+        <omgdc:Bounds height="40.0" width="40.0" x="790.0" y="250.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="approveAsset" id="BPMNShape_approveAsset">
+        <omgdc:Bounds height="55.0" width="105.0" x="880.0" y="200.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="rejectAsset" id="BPMNShape_rejectAsset">
+        <omgdc:Bounds height="55.0" width="105.0" x="880.0" y="305.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="endApproved" id="BPMNShape_endApproved">
+        <omgdc:Bounds height="28.0" width="28.0" x="1040.0" y="213.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="endRejected" id="BPMNShape_endRejected">
+        <omgdc:Bounds height="28.0" width="28.0" x="1040.0" y="318.5"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+
+      <bpmndi:BPMNEdge bpmnElement="flowStart" id="BPMNEdge_flowStart">
+        <omgdi:waypoint x="150.0" y="115.0"></omgdi:waypoint>
+        <omgdi:waypoint x="190.0" y="115.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowToForm" id="BPMNEdge_flowToForm">
+        <omgdi:waypoint x="295.0" y="115.0"></omgdi:waypoint>
+        <omgdi:waypoint x="340.0" y="115.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowToCreate" id="BPMNEdge_flowToCreate">
+        <omgdi:waypoint x="445.0" y="115.0"></omgdi:waypoint>
+        <omgdi:waypoint x="490.0" y="115.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowToReview" id="BPMNEdge_flowToReview">
+        <omgdi:waypoint x="542.5" y="142.5"></omgdi:waypoint>
+        <omgdi:waypoint x="542.5" y="242.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowToValidate" id="BPMNEdge_flowToValidate">
+        <omgdi:waypoint x="595.0" y="270.0"></omgdi:waypoint>
+        <omgdi:waypoint x="640.0" y="270.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowToGateway" id="BPMNEdge_flowToGateway">
+        <omgdi:waypoint x="745.0" y="270.0"></omgdi:waypoint>
+        <omgdi:waypoint x="790.0" y="270.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowApprove" id="BPMNEdge_flowApprove">
+        <omgdi:waypoint x="810.0" y="250.0"></omgdi:waypoint>
+        <omgdi:waypoint x="810.0" y="227.5"></omgdi:waypoint>
+        <omgdi:waypoint x="880.0" y="227.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowReject" id="BPMNEdge_flowReject">
+        <omgdi:waypoint x="830.0" y="270.0"></omgdi:waypoint>
+        <omgdi:waypoint x="850.0" y="270.0"></omgdi:waypoint>
+        <omgdi:waypoint x="850.0" y="332.5"></omgdi:waypoint>
+        <omgdi:waypoint x="880.0" y="332.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowInvalid" id="BPMNEdge_flowInvalid">
+        <omgdi:waypoint x="810.0" y="290.0"></omgdi:waypoint>
+        <omgdi:waypoint x="810.0" y="362.0"></omgdi:waypoint>
+        <omgdi:waypoint x="542.5" y="362.0"></omgdi:waypoint>
+        <omgdi:waypoint x="542.5" y="297.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowApprovedEnd" id="BPMNEdge_flowApprovedEnd">
+        <omgdi:waypoint x="985.0" y="227.5"></omgdi:waypoint>
+        <omgdi:waypoint x="1040.0" y="227.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flowRejectedEnd" id="BPMNEdge_flowRejectedEnd">
+        <omgdi:waypoint x="985.0" y="332.5"></omgdi:waypoint>
+        <omgdi:waypoint x="1040.0" y="332.5"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>
